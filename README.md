@@ -99,25 +99,13 @@ datadog-opw/
 ├── opw-config/                 # OPW configuration files
 │   └── README.md               # Configuration documentation
 ├── Dockerfile                  # OPW custom image
-├── datadog.yaml               # Agent configuration (to be created)
-├── system-probe.yaml          # System probe config (optional)
-└── conf.d/                    # Agent integrations (to be created)
+└── opw-config/                # OPW configuration files
 ```
 
 ## 🔧 Configuration Files
 
 ### Agent Configuration
-Create `datadog.yaml` with your Datadog Agent settings:
-
-```yaml
-api_key: ${DD_API_KEY}
-site: datadoghq.com
-logs_enabled: true
-process_config:
-  enabled: "true"
-apm_config:
-  enabled: true
-```
+The Datadog Agent is configured entirely through environment variables in the deployment. No custom configuration files are needed.
 
 ### OPW Custom Pipelines
 Add custom configurations to `opw-config/`:
@@ -222,7 +210,7 @@ curl http://localhost:8686/health
 
 ### Making Changes
 
-1. **Update Configuration**: Modify `datadog.yaml`, configs in `conf.d/`, or `opw-config/`
+1. **Update Configuration**: Modify OPW configs in `opw-config/` or environment variables
 2. **Test Locally**: Validate YAML syntax and configuration
 3. **Deploy**: Run `./scripts/deploy.sh` to deploy changes
 4. **Monitor**: Check GitHub Actions and container health

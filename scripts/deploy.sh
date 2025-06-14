@@ -105,15 +105,11 @@ check_prerequisites() {
         fi
     fi
     
-    # Check for required Datadog configuration files
+    # Check for required OPW configuration files
     local missing_files=()
-    if [[ ! -f "datadog.yaml" ]]; then
-        missing_files+=("datadog.yaml")
-    fi
     if [[ ! -f "Dockerfile" ]]; then
         missing_files+=("Dockerfile")
     fi
-    # Note: docker-compose.yaml removed - using standalone Docker deployment
     
     if [[ ${#missing_files[@]} -gt 0 ]]; then
         print_error "Missing required files: ${missing_files[*]}"
@@ -294,7 +290,7 @@ perform_git_operations() {
     echo
     
     # Get commit message
-    local default_message="Deploy: Update Datadog Agent configuration and deployment"
+    local default_message="Deploy: Update Datadog OPW configuration and deployment"
     read -p "Enter commit message [$default_message]: " commit_message
     commit_message="${commit_message:-$default_message}"
     
@@ -371,9 +367,9 @@ show_post_deployment_info() {
     echo -e "${GREEN}🎉 Your Datadog Agent and OPW have been deployed!${NC}"
     echo
     echo -e "${CYAN}What happens next:${NC}"
-    echo "  1. GitHub Actions will build your custom Datadog Agent and OPW Docker images"
-    echo "  2. Configuration files will be copied to your Synology NAS"
-    echo "  3. Datadog Agent and OPW will be deployed as standalone containers"  
+    echo "  1. GitHub Actions will build your custom OPW Docker image"
+    echo "  2. OPW configuration files will be copied to your Synology NAS"
+    echo "  3. Official Datadog Agent and custom OPW will be deployed as standalone containers"  
     echo "  4. Health checks will verify both deployments"
     echo "  5. Deployments will be marked in Datadog for tracking"
     echo
@@ -396,12 +392,10 @@ show_post_deployment_info() {
     echo "  • SSH to Synology and check container logs:"
     echo "    - docker logs dd-agent"
     echo "    - docker logs dd-opw"
-    echo "  • Verify configuration files:"
-    echo "    - /volume1/docker/datadog-agent/"
-    echo "    - /volume1/docker/datadog-opw/"
     echo "  • Check Datadog Agent status: docker exec dd-agent datadog-agent status"
     echo "  • Check OPW API health: curl http://localhost:8686/health"
-    echo "  • Validate API keys and pipeline configuration"
+    echo "  • Verify OPW configuration files: /volume1/docker/datadog-opw/"
+    echo "  • Validate API keys and pipeline configuration in environment variables"
     echo
 }
 
