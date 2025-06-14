@@ -13,6 +13,8 @@ RUN mkdir -p /etc/datadog-opw
 
 # Set environment variables with defaults
 ENV DD_SITE=datadoghq.com
+ENV PUID=1026
+ENV PGID=100
 ENV DD_OP_SOURCE_DATADOG_AGENT_ADDRESS=0.0.0.0:8282
 ENV DD_OP_CONFIG_SOURCE=datadog
 ENV DD_LOG_LEVEL=info

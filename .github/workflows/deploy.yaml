@@ -229,6 +229,13 @@ jobs:
               echo "✅ Data directory already exists"
             fi
             
+            # Set permissions to match Synology PUID/PGID (1026:100)
+            # Note: This assumes the SSH user has permission to change ownership
+            # If this fails, the directory permissions should still work with --user flag
+            chown -R $(whoami):users "$OPW_DIR/data" 2>/dev/null || echo "Note: Could not change ownership, but --user flag should handle permissions"
+            chmod 755 "$OPW_DIR/data"
+            echo "✅ Set directory permissions for Synology container access"
+            
             # Verify directory exists before Docker run
             if [ ! -d "$OPW_DIR/data" ]; then
               echo "❌ Data directory verification failed"
@@ -240,6 +247,9 @@ jobs:
             $DOCKER_CMD run -d \
               --name dd-opw \
               --restart unless-stopped \
+              --user 1026:100 \
+              -e PUID=1026 \
+              -e PGID=100 \
               -e DD_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
               -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
               -e DD_SITE=datadoghq.com \
