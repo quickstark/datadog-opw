@@ -249,7 +249,7 @@ jobs:
               -e RUST_LOG=info,observability_pipelines_worker=debug,vector=debug \
               -e DD_OP_API_ENABLED=true \
               -e DD_OP_API_ADDRESS=0.0.0.0:8686 \
-              -v /volume1/docker/datadog-opw/data:/var/lib/datadog/observability-pipelines-worker \
+              -v /volume1/docker/datadog-opw/data:/var/lib/observability-pipelines-worker \
               -p 8282:8282/tcp \
               -p 8686:8686/tcp \
               --label "deployment.timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
