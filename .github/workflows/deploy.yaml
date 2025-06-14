@@ -242,14 +242,14 @@ jobs:
               exit 1
             fi
             
-            # Deploy Datadog OPW
+            # Deploy Datadog OPW - matching docker-compose approach
             echo "🚀 Starting Datadog OPW..."
+            
+            # Try without any volume mount first to see if that's the issue
+            echo "Testing container start without volume mount..."
             $DOCKER_CMD run -d \
-              --name dd-opw \
+              --name dd-opw-test \
               --restart unless-stopped \
-              --user 1026:100 \
-              -e PUID=1026 \
-              -e PGID=100 \
               -e DD_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
               -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
               -e DD_SITE=datadoghq.com \
@@ -259,7 +259,6 @@ jobs:
               -e RUST_LOG=info,observability_pipelines_worker=debug,vector=debug \
               -e DD_OP_API_ENABLED=true \
               -e DD_OP_API_ADDRESS=0.0.0.0:8686 \
-              -v /volume1/docker/datadog-opw/data:/var/lib/observability-pipelines-worker \
               -p 8282:8282/tcp \
               -p 8686:8686/tcp \
               --label "deployment.timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
@@ -267,6 +266,45 @@ jobs:
               --label "deployment.commit=${{ github.sha }}" \
               --label "deployment.repository=${{ github.repository }}" \
               ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
+            
+            # Wait and check if it starts without volume
+            sleep 10
+            if $DOCKER_CMD ps | grep -q "dd-opw-test.*Up"; then
+              echo "✅ Container starts without volume mount - issue is volume permissions"
+              # Stop test container
+              $DOCKER_CMD stop dd-opw-test
+              $DOCKER_CMD rm dd-opw-test
+              
+              # Now try with volume but different approach
+              echo "Starting with volume mount and proper user..."
+              $DOCKER_CMD run -d \
+                --name dd-opw \
+                --restart unless-stopped \
+                --user 1026:100 \
+                -e DD_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
+                -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
+                -e DD_SITE=datadoghq.com \
+                -e DD_OP_SOURCE_DATADOG_AGENT_ADDRESS=0.0.0.0:8282 \
+                -e DD_OP_CONFIG_SOURCE=datadog \
+                -e DD_LOG_LEVEL=debug \
+                -e RUST_LOG=info,observability_pipelines_worker=debug,vector=debug \
+                -e DD_OP_API_ENABLED=true \
+                -e DD_OP_API_ADDRESS=0.0.0.0:8686 \
+                -v /volume1/docker/datadog-opw/data:/var/lib/observability-pipelines-worker \
+                -p 8282:8282/tcp \
+                -p 8686:8686/tcp \
+                --label "deployment.timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+                --label "deployment.source=github-actions" \
+                --label "deployment.commit=${{ github.sha }}" \
+                --label "deployment.repository=${{ github.repository }}" \
+                ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
+            else
+              echo "❌ Container won't start even without volume - different issue"
+              $DOCKER_CMD logs dd-opw-test --tail 20
+              $DOCKER_CMD stop dd-opw-test || true
+              $DOCKER_CMD rm dd-opw-test || true
+              exit 1
+            fi
             
             # Wait for OPW service to be ready
             echo "⏳ Waiting for Datadog OPW to start..."
