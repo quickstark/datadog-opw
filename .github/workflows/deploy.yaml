@@ -240,7 +240,7 @@ jobs:
             $DOCKER_CMD run -d \
               --name dd-opw \
               --restart unless-stopped \
-              -e DD_OPW_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
+              -e DD_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
               -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
               -e DD_SITE=datadoghq.com \
               -e DD_OP_SOURCE_DATADOG_AGENT_ADDRESS=0.0.0.0:8282 \
