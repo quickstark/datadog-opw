@@ -26,8 +26,8 @@ ENV DD_OP_API_ADDRESS=0.0.0.0:8686
 RUN groupadd -r datadog-opw && useradd -r -g datadog-opw datadog-opw
 
 # Create data directory and set permissions
-RUN mkdir -p /var/lib/datadog/observability-pipelines-worker && \
-    chown -R datadog-opw:datadog-opw /var/lib/datadog/observability-pipelines-worker
+RUN mkdir -p /var/lib/observability-pipelines-worker && \
+    chown -R datadog-opw:datadog-opw /var/lib/observability-pipelines-worker
 
 # Expose ports for OPW
 EXPOSE 8282/tcp 8686/tcp
