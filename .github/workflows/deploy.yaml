@@ -199,12 +199,28 @@ jobs:
             $DOCKER_CMD container prune -f
             $DOCKER_CMD image prune -f
             
+            # Ensure data directory exists and has proper permissions
+            echo "📁 Ensuring OPW data directory exists..."
+            if [ ! -d "$OPW_DIR/data" ]; then
+              echo "Creating data directory: $OPW_DIR/data"
+              sudo mkdir -p "$OPW_DIR/data"
+              sudo chown -R $(whoami):users "$OPW_DIR/data"
+              echo "✅ Data directory created"
+            else
+              echo "✅ Data directory already exists"
+            fi
+            
+            # Verify directory exists before Docker run
+            if [ ! -d "$OPW_DIR/data" ]; then
+              echo "❌ Failed to create data directory"
+              exit 1
+            fi
+            
             # Deploy Datadog OPW
             echo "🚀 Starting Datadog OPW..."
             $DOCKER_CMD run -d \
               --name dd-opw \
               --restart unless-stopped \
-              --network host \
               -e DD_OPW_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
               -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
               -e DD_SITE=datadoghq.com \
