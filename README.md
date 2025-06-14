@@ -98,8 +98,7 @@ datadog-opw/
 │   └── setup-secrets.sh        # GitHub secrets management
 ├── opw-config/                 # OPW configuration files
 │   └── README.md               # Configuration documentation
-├── Dockerfile                  # Datadog Agent custom image
-├── Dockerfile.opw              # OPW custom image
+├── Dockerfile                  # OPW custom image
 ├── datadog.yaml               # Agent configuration (to be created)
 ├── system-probe.yaml          # System probe config (optional)
 └── conf.d/                    # Agent integrations (to be created)
@@ -198,7 +197,7 @@ curl http://localhost:8686/health
 
 **Build Failures**
 - Check GitHub Actions logs for specific errors
-- Verify all required files exist (Dockerfile, Dockerfile.opw)
+- Verify all required files exist (Dockerfile)
 - Validate YAML syntax in configuration files
 
 **Deployment Failures**

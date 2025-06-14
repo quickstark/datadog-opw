@@ -1,8 +1,8 @@
 FROM datadog/observability-pipelines-worker:latest
 
 # Metadata
-LABEL maintainer="Your Name <your.email@example.com>"
-LABEL description="Custom Datadog Observability Pipelines Worker"
+LABEL maintainer="Dirk <dirk@quickstark.com>"
+LABEL description="Datadog Observability Pipelines Worker"
 LABEL version="1.0"
 
 # Create configuration directory

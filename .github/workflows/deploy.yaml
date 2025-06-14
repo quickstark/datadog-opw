@@ -9,14 +9,13 @@
 # - DD_API_KEY, DD_OPW_API_KEY, DD_OP_PIPELINE_ID
 # - Any project-specific database credentials, etc.
 
-name: Build and Deploy Datadog Agent and OPW
+name: Build and Deploy Datadog OPW
 on:
   workflow_dispatch:  # Allow manual triggering
   push:
     branches: [ main ]
     paths:
       - 'Dockerfile'
-      - 'Dockerfile.opw'
       - 'datadog.yaml'
       - 'docker-compose.yaml'
       - 'conf.d/**'
@@ -28,7 +27,6 @@ on:
     branches: [ main ]
     paths:
       - 'Dockerfile'
-      - 'Dockerfile.opw'
       - 'datadog.yaml'
       - 'docker-compose.yaml'
       - 'conf.d/**'
@@ -60,31 +58,12 @@ jobs:
           npm install -g @datadog/datadog-ci
           datadog-ci version
       
-      # Build and push custom Datadog Agent image
-      - name: Build and push Datadog Agent image
-        id: docker_build_agent
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64  # Synology DS923+ AMD64 compatibility
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
-            ${{ secrets.DOCKERHUB_USER }}/dd-agent:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ steps.meta.outputs.date }}
-      
       # Build and push custom OPW image
       - name: Build and push Datadog OPW image
         id: docker_build_opw
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile.opw
           platforms: linux/amd64  # Synology DS923+ AMD64 compatibility
           push: true
           tags: |
@@ -113,10 +92,7 @@ jobs:
             exit 1
           fi
           
-          if [ ! -f "Dockerfile.opw" ]; then
-            echo "❌ Dockerfile.opw not found"
-            exit 1
-          fi
+
           
           # Basic YAML syntax validation
           python -c "import yaml; yaml.safe_load(open('datadog.yaml'))" || {
@@ -175,7 +151,7 @@ jobs:
       - name: Deploy Datadog Agent and OPW to Synology
         id: synology_deploy
         uses: appleboy/ssh-action@v1.0.3
-        if: steps.docker_build_agent.outcome == 'success' && steps.docker_build_opw.outcome == 'success' && github.ref == 'refs/heads/main'
+        if: steps.docker_build_opw.outcome == 'success' && github.ref == 'refs/heads/main'
         with:
           host: ${{ secrets.SYNOLOGY_HOST }}
           port: ${{ secrets.SYNOLOGY_SSH_PORT }}
@@ -301,8 +277,8 @@ jobs:
             fi
             
             # Pull the latest images
-            echo "📥 Pulling latest Datadog Agent image..."
-            $DOCKER_CMD pull ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
+            echo "📥 Pulling official Datadog Agent image..."
+            $DOCKER_CMD pull datadog/agent:latest
             
             echo "📥 Pulling latest Datadog OPW image..."
             $DOCKER_CMD pull ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
@@ -351,7 +327,7 @@ jobs:
               --label "deployment.source=github-actions" \
               --label "deployment.commit=${{ github.sha }}" \
               --label "deployment.repository=${{ github.repository }}" \
-              ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
+              datadog/agent:latest
             
             # Wait for service to be ready
             echo "⏳ Waiting for Datadog Agent to start..."
@@ -504,4 +480,4 @@ jobs:
           echo "- SSH connection to Synology"
           echo "- Invalid YAML configuration"
           echo "- Missing secrets (DD_API_KEY, DD_OPW_API_KEY, DD_OP_PIPELINE_ID)"
-          echo "- Missing Dockerfile.opw" 
+          echo "- Missing Dockerfile" 
