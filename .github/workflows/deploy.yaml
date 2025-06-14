@@ -1,0 +1,507 @@
+# At the top of the file, add a comment about organization secrets
+# This workflow uses both repository secrets (project-specific) and organization secrets (shared infrastructure)
+# 
+# Organization Secrets (set once, used everywhere):
+# - SYNOLOGY_HOST, SYNOLOGY_SSH_PORT, SYNOLOGY_USER, SYNOLOGY_SSH_KEY
+# - DOCKERHUB_USER, DOCKERHUB_TOKEN
+#
+# Repository Secrets (project-specific):
+# - DD_API_KEY, DD_OPW_API_KEY, DD_OP_PIPELINE_ID
+# - Any project-specific database credentials, etc.
+
+name: Build and Deploy Datadog Agent and OPW
+on:
+  workflow_dispatch:  # Allow manual triggering
+  push:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.opw'
+      - 'datadog.yaml'
+      - 'docker-compose.yaml'
+      - 'conf.d/**'
+      - 'system-probe.yaml'
+      - 'opw-config/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.opw'
+      - 'datadog.yaml'
+      - 'docker-compose.yaml'
+      - 'conf.d/**'
+      - 'system-probe.yaml'
+      - 'opw-config/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Set up Docker Buildx for multi-platform builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      # Login to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      # Install Datadog CI for deployment tracking
+      - name: Install Datadog CI
+        run: |
+          npm install -g @datadog/datadog-ci
+          datadog-ci version
+      
+      # Build and push custom Datadog Agent image
+      - name: Build and push Datadog Agent image
+        id: docker_build_agent
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64  # Synology DS923+ AMD64 compatibility
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
+            ${{ secrets.DOCKERHUB_USER }}/dd-agent:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.date }}
+      
+      # Build and push custom OPW image
+      - name: Build and push Datadog OPW image
+        id: docker_build_opw
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.opw
+          platforms: linux/amd64  # Synology DS923+ AMD64 compatibility
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
+            ${{ secrets.DOCKERHUB_USER }}/dd-opw:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.date }}
+      
+      # Validate configuration files
+      - name: Validate Datadog and OPW configuration
+        run: |
+          echo "Validating Datadog and OPW configuration files..."
+          
+          # Check if required files exist
+          if [ ! -f "datadog.yaml" ]; then
+            echo "❌ datadog.yaml not found"
+            exit 1
+          fi
+          
+          if [ ! -f "Dockerfile" ]; then
+            echo "❌ Dockerfile not found"
+            exit 1
+          fi
+          
+          if [ ! -f "Dockerfile.opw" ]; then
+            echo "❌ Dockerfile.opw not found"
+            exit 1
+          fi
+          
+          # Basic YAML syntax validation
+          python -c "import yaml; yaml.safe_load(open('datadog.yaml'))" || {
+            echo "❌ datadog.yaml has invalid YAML syntax"
+            exit 1
+          }
+          
+          # Validate system-probe.yaml if it exists
+          if [ -f "system-probe.yaml" ]; then
+            python -c "import yaml; yaml.safe_load(open('system-probe.yaml'))" || {
+              echo "❌ system-probe.yaml has invalid YAML syntax"
+            exit 1
+          }
+            echo "✅ system-probe.yaml is valid"
+          fi
+          
+          # Validate conf.d configurations
+          for config_file in conf.d/**/*.yaml; do
+            if [ -f "$config_file" ]; then
+              echo "Validating $config_file..."
+              python -c "import yaml; yaml.safe_load(open('$config_file'))" || {
+                echo "❌ $config_file has invalid YAML syntax"
+                exit 1
+              }
+            fi
+          done
+          
+          # Validate OPW configurations if they exist
+          if [ -d "opw-config" ]; then
+            for config_file in opw-config/**/*.yaml opw-config/**/*.yml; do
+              if [ -f "$config_file" ]; then
+                echo "Validating $config_file..."
+                python -c "import yaml; yaml.safe_load(open('$config_file'))" || {
+                  echo "❌ $config_file has invalid YAML syntax"
+                  exit 1
+                }
+              fi
+            done
+          fi
+          
+          echo "✅ All configuration files are valid"
+      
+      # Copy configuration files to Synology
+      - name: Copy configuration files to Synology
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SYNOLOGY_HOST }}
+          port: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          username: ${{ secrets.SYNOLOGY_USER }}
+          key: ${{ secrets.SYNOLOGY_SSH_KEY }}
+          source: "datadog.yaml,system-probe.yaml,conf.d/*,opw-config/*"
+          target: "/tmp/datadog-config/"
+          strip_components: 0
+
+      # Deploy to Synology
+      - name: Deploy Datadog Agent and OPW to Synology
+        id: synology_deploy
+        uses: appleboy/ssh-action@v1.0.3
+        if: steps.docker_build_agent.outcome == 'success' && steps.docker_build_opw.outcome == 'success' && github.ref == 'refs/heads/main'
+        with:
+          host: ${{ secrets.SYNOLOGY_HOST }}
+          port: ${{ secrets.SYNOLOGY_SSH_PORT }}
+          username: ${{ secrets.SYNOLOGY_USER }}
+          key: ${{ secrets.SYNOLOGY_SSH_KEY }}
+          script: |
+            # Debug: Environment setup
+            echo "🔧 Setting up deployment environment..."
+            echo "Current user: $(whoami)"
+            echo "Current directory: $(pwd)"
+            
+            # Find Docker command
+            if [ -f /usr/local/bin/docker ]; then
+              DOCKER_CMD="/usr/local/bin/docker"
+            elif [ -f /usr/bin/docker ]; then
+              DOCKER_CMD="/usr/bin/docker"
+            elif command -v docker >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            else
+              echo "❌ Docker not found"
+              exit 1
+            fi
+            
+            # Check Docker permissions
+            if $DOCKER_CMD --version >/dev/null 2>&1; then
+              echo "✅ Docker accessible without sudo"
+            elif sudo $DOCKER_CMD --version >/dev/null 2>&1; then
+              echo "✅ Docker accessible with sudo"
+              DOCKER_CMD="sudo $DOCKER_CMD"
+            else
+              echo "❌ Cannot access Docker"
+              exit 1
+            fi
+            
+            echo "Using Docker: $DOCKER_CMD"
+            echo "Note: Using standalone Docker deployment (no docker-compose needed)"
+            
+            # Set up Datadog Agent directory structure
+            DATADOG_DIR="/volume1/docker/datadog-agent"
+            echo "📁 Setting up Datadog Agent directory structure..."
+            
+            # Create main directory
+            sudo mkdir -p "$DATADOG_DIR"
+            sudo chown $(whoami):users "$DATADOG_DIR"
+            
+            # Create conf.d subdirectories
+            sudo mkdir -p "$DATADOG_DIR/conf.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/postgres.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/mongo.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/snmp.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/syslog.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/network_path.d"
+            sudo mkdir -p "$DATADOG_DIR/conf.d/networkdevice.d"
+            
+            # Set proper ownership
+            sudo chown -R $(whoami):users "$DATADOG_DIR"
+            
+            # Set up Datadog OPW directory structure
+            OPW_DIR="/volume1/docker/datadog-opw"
+            echo "📁 Setting up Datadog OPW directory structure..."
+            
+            # Create main OPW directory
+            sudo mkdir -p "$OPW_DIR"
+            sudo chown $(whoami):users "$OPW_DIR"
+            
+            # Create OPW data directory
+            sudo mkdir -p "$OPW_DIR/data"
+            sudo chown -R $(whoami):users "$OPW_DIR"
+            
+            # Copy configuration files from temp location
+            echo "📋 Copying configuration files..."
+            if [ -d "/tmp/datadog-config" ]; then
+              # Copy main config files
+              if [ -f "/tmp/datadog-config/datadog.yaml" ]; then
+                cp "/tmp/datadog-config/datadog.yaml" "$DATADOG_DIR/"
+                echo "✅ Copied datadog.yaml"
+              fi
+              
+              if [ -f "/tmp/datadog-config/system-probe.yaml" ]; then
+                cp "/tmp/datadog-config/system-probe.yaml" "$DATADOG_DIR/"
+                echo "✅ Copied system-probe.yaml"
+              fi
+              
+              # Copy conf.d directory structure
+              if [ -d "/tmp/datadog-config/conf.d" ]; then
+                cp -r /tmp/datadog-config/conf.d/* "$DATADOG_DIR/conf.d/" 2>/dev/null || echo "No conf.d files to copy"
+                echo "✅ Copied conf.d configurations"
+              fi
+              
+              # Copy OPW configuration files
+              if [ -d "/tmp/datadog-config/opw-config" ]; then
+                cp -r /tmp/datadog-config/opw-config/* "$OPW_DIR/" 2>/dev/null || echo "No OPW config files to copy"
+                echo "✅ Copied OPW configurations"
+              fi
+              
+              # Substitute environment variables in datadog.yaml
+              if [ -f "$DATADOG_DIR/datadog.yaml" ]; then
+                echo "🔧 Substituting environment variables in datadog.yaml..."
+                sed -i "s/\${DD_API_KEY}/${{ secrets.DD_API_KEY }}/g" "$DATADOG_DIR/datadog.yaml"
+                echo "✅ Environment variables substituted"
+              fi
+              
+              # Clean up temp files
+              rm -rf "/tmp/datadog-config"
+            else
+              echo "⚠️  No configuration files found in temp location"
+            fi
+            
+            # Set proper permissions on all config files
+            find "$DATADOG_DIR" -name "*.yaml" -exec chmod 644 {} \;
+            
+            cd "$DATADOG_DIR"
+            
+            # List what we have
+            echo "📂 Configuration files structure:"
+            find "$DATADOG_DIR" -name "*.yaml" | head -20
+            
+            # Login to Docker Hub
+            echo "🔐 Logging into Docker Hub..."
+            if ! echo "${{ secrets.DOCKERHUB_TOKEN }}" | $DOCKER_CMD login --username "${{ secrets.DOCKERHUB_USER }}" --password-stdin; then
+              echo "❌ Failed to login to Docker Hub"
+              exit 1
+            fi
+            
+            # Pull the latest images
+            echo "📥 Pulling latest Datadog Agent image..."
+            $DOCKER_CMD pull ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
+            
+            echo "📥 Pulling latest Datadog OPW image..."
+            $DOCKER_CMD pull ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
+            
+            # Stop existing containers
+            echo "🛑 Stopping existing Datadog Agent..."
+            $DOCKER_CMD stop dd-agent || echo "No existing dd-agent container to stop"
+            $DOCKER_CMD rm dd-agent || echo "No existing dd-agent container to remove"
+            
+            echo "🛑 Stopping existing Datadog OPW..."
+            $DOCKER_CMD stop dd-opw || echo "No existing dd-opw container to stop"
+            $DOCKER_CMD rm dd-opw || echo "No existing dd-opw container to remove"
+            
+            # Clean up old containers and images
+            echo "🧹 Cleaning up old resources..."
+            $DOCKER_CMD container prune -f
+            $DOCKER_CMD image prune -f
+            
+            # Deploy standalone Datadog Agent
+            echo "🚀 Starting standalone Datadog Agent..."
+            $DOCKER_CMD run -d \
+              --name dd-agent \
+              --privileged \
+              --restart unless-stopped \
+              --network host \
+              -e DD_API_KEY=${{ secrets.DD_API_KEY }} \
+              -v /var/run/docker.sock:/var/run/docker.sock:ro \
+              -v /proc:/host/proc:ro \
+              -v /sys/fs/cgroup:/host/sys/fs/cgroup:ro \
+              -v /sys/kernel/debug:/sys/kernel/debug \
+              -v /etc/passwd:/etc/passwd:ro \
+              -v /volume1/@docker/containers:/var/lib/docker/containers:ro \
+              -v /volume1/docker/datadog-agent/datadog.yaml:/etc/datadog-agent/datadog.yaml:ro \
+              -v /volume1/docker/datadog-agent/system-probe.yaml:/etc/datadog-agent/system-probe.yaml:ro \
+              -v /volume1/docker/datadog-agent/conf.d:/etc/datadog-agent/conf.d:ro \
+              --cap-add SYS_ADMIN \
+              --cap-add SYS_RESOURCE \
+              --cap-add SYS_PTRACE \
+              --cap-add NET_ADMIN \
+              --cap-add NET_BROADCAST \
+              --cap-add NET_RAW \
+              --cap-add IPC_LOCK \
+              --cap-add CHOWN \
+              --security-opt apparmor:unconfined \
+              --label "deployment.timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              --label "deployment.source=github-actions" \
+              --label "deployment.commit=${{ github.sha }}" \
+              --label "deployment.repository=${{ github.repository }}" \
+              ${{ secrets.DOCKERHUB_USER }}/dd-agent:latest
+            
+            # Wait for service to be ready
+            echo "⏳ Waiting for Datadog Agent to start..."
+            sleep 30
+            
+            # Verify service is running
+            echo "🔍 Verifying Datadog Agent status..."
+            if $DOCKER_CMD ps | grep -q "dd-agent.*Up"; then
+              echo "✅ Datadog Agent is running"
+            else
+              echo "❌ Datadog Agent failed to start"
+              $DOCKER_CMD logs dd-agent
+              exit 1
+            fi
+            
+            # Health check
+            echo "🏥 Performing health checks..."
+            
+            # Check Datadog Agent health
+            if $DOCKER_CMD exec dd-agent /opt/datadog-agent/bin/agent/agent health 2>/dev/null; then
+              echo "✅ Datadog Agent health check passed"
+            else
+              echo "⚠️  Datadog Agent health check failed - checking logs..."
+              $DOCKER_CMD logs dd-agent --tail 20
+            fi
+            
+            # Deploy Datadog OPW
+            echo "🚀 Starting Datadog OPW..."
+            $DOCKER_CMD run -d \
+              --name dd-opw \
+              --restart unless-stopped \
+              --network host \
+              -e DD_OPW_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
+              -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
+              -e DD_SITE=datadoghq.com \
+              -e DD_OP_SOURCE_DATADOG_AGENT_ADDRESS=0.0.0.0:8282 \
+              -e DD_OP_CONFIG_SOURCE=datadog \
+              -e DD_LOG_LEVEL=debug \
+              -e RUST_LOG=info,observability_pipelines_worker=debug,vector=debug \
+              -e DD_OP_API_ENABLED=true \
+              -e DD_OP_API_ADDRESS=0.0.0.0:8686 \
+              -v /volume1/docker/datadog-opw/data:/var/lib/datadog/observability-pipelines-worker \
+              -p 8282:8282/tcp \
+              -p 8686:8686/tcp \
+              --label "deployment.timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              --label "deployment.source=github-actions" \
+              --label "deployment.commit=${{ github.sha }}" \
+              --label "deployment.repository=${{ github.repository }}" \
+              ${{ secrets.DOCKERHUB_USER }}/dd-opw:latest
+            
+            # Wait for OPW service to be ready
+            echo "⏳ Waiting for Datadog OPW to start..."
+            sleep 20
+            
+            # Verify OPW service is running
+            echo "🔍 Verifying Datadog OPW status..."
+            if $DOCKER_CMD ps | grep -q "dd-opw.*Up"; then
+              echo "✅ Datadog OPW is running"
+            else
+              echo "❌ Datadog OPW failed to start"
+              $DOCKER_CMD logs dd-opw
+              exit 1
+            fi
+            
+            # Check OPW health
+            echo "🏥 Performing OPW health checks..."
+            
+            # Wait a bit more for OPW to fully start
+            sleep 10
+            
+            if curl -f http://localhost:8686/health 2>/dev/null; then
+              echo "✅ Datadog OPW health check passed"
+            else
+              echo "⚠️  Datadog OPW health check failed - checking logs..."
+              $DOCKER_CMD logs dd-opw --tail 20
+            fi
+            
+            # Show final status
+            echo "📊 Final service status:"
+            $DOCKER_CMD ps --filter "name=dd-agent"
+            $DOCKER_CMD ps --filter "name=dd-opw"
+            
+            echo "🎉 Datadog Agent and OPW deployment completed successfully!"
+            echo "📍 Agent Status: http://localhost:5002/status"
+            echo "📍 OPW API: http://localhost:8686/health"
+            echo "📍 OPW Listening: http://localhost:8282 (Agent forwarding logs here)"
+      
+      # Mark deployment in Datadog (only for main branch)
+      - name: Mark Deployment in Datadog
+        if: steps.synology_deploy.outcome == 'success' && github.ref == 'refs/heads/main'
+        env:
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          DD_SITE: datadoghq.com
+          DD_BETA_COMMANDS_ENABLED: 1
+        run: |
+          REVISION="${{ github.sha }}"
+          SHORT_SHA="${REVISION:0:7}"
+          DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          echo "📊 Marking Datadog Agent deployment..."
+          echo "Environment: infrastructure"
+          echo "Service: datadog-agent"
+          echo "Revision: $SHORT_SHA"
+          echo "Deploy Time: $DEPLOY_TIME"
+          
+          # Mark the Agent deployment
+          datadog-ci deployment mark \
+            --env "infrastructure" \
+            --service "datadog-agent" \
+            --revision "$SHORT_SHA" \
+            --tags "deployment_method:github_actions" \
+            --tags "repository:${{ github.repository }}" \
+            --tags "branch:${{ github.ref_name }}" \
+            --tags "actor:${{ github.actor }}" \
+            --tags "workflow:${{ github.workflow }}" \
+            --tags "run_id:${{ github.run_id }}" \
+            --tags "deploy_time:$DEPLOY_TIME" \
+            --tags "component:monitoring" \
+            --tags "infrastructure:synology" \
+            --no-fail || echo "⚠️  Failed to mark Agent deployment in Datadog (non-blocking)"
+          
+          echo "📊 Marking Datadog OPW deployment..."
+          
+          # Mark the OPW deployment
+          datadog-ci deployment mark \
+            --env "infrastructure" \
+            --service "datadog-opw" \
+            --revision "$SHORT_SHA" \
+            --tags "deployment_method:github_actions" \
+            --tags "repository:${{ github.repository }}" \
+            --tags "branch:${{ github.ref_name }}" \
+            --tags "actor:${{ github.actor }}" \
+            --tags "workflow:${{ github.workflow }}" \
+            --tags "run_id:${{ github.run_id }}" \
+            --tags "deploy_time:$DEPLOY_TIME" \
+            --tags "component:log_processing" \
+            --tags "infrastructure:synology" \
+            --no-fail || echo "⚠️  Failed to mark OPW deployment in Datadog (non-blocking)"
+          
+          echo "✅ Deployments marked in Datadog successfully!"
+      
+      # Notification on failure
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "❌ Datadog Agent and OPW deployment failed!"
+          echo "Please check the logs and configuration files."
+          echo "Common issues:"
+          echo "- Docker Hub authentication"
+          echo "- SSH connection to Synology"
+          echo "- Invalid YAML configuration"
+          echo "- Missing secrets (DD_API_KEY, DD_OPW_API_KEY, DD_OP_PIPELINE_ID)"
+          echo "- Missing Dockerfile.opw" 
