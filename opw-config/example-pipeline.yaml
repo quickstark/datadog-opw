@@ -1,0 +1,111 @@
+# Example OPW Pipeline Configuration
+# This is an example pipeline that shows how to process logs from the Datadog Agent
+# and forward them to Datadog with custom transformations.
+#
+# File: opw-config/example-pipeline.yaml
+# Description: Basic log processing pipeline with JSON parsing and enrichment
+
+# Data Sources - where data comes from
+sources:
+  # Receive data from Datadog Agent on port 8282
+  datadog_agent:
+    type: datadog_agent
+    address: 0.0.0.0:8282
+    multiple_outputs: true
+
+# Data Transformations - process and enrich the data
+transforms:
+  # Parse JSON logs
+  parse_json_logs:
+    type: remap
+    inputs: [datadog_agent.logs]
+    source: |
+      # Try to parse message as JSON, fall back to original if parsing fails
+      if is_string(.message) {
+        parsed = parse_json(.message) ?? {}
+        if is_object(parsed) {
+          . = merge(., parsed)
+        }
+      }
+  
+  # Add custom tags and metadata
+  enrich_logs:
+    type: remap
+    inputs: [parse_json_logs]
+    source: |
+      # Add deployment environment
+      .env = "production"
+      
+      # Add processing timestamp
+      .processed_at = now()
+      
+      # Add source information
+      .pipeline_source = "datadog-opw"
+      
+      # Clean up null values
+      . = compact(.)
+
+  # Route metrics separately  
+  route_metrics:
+    type: route
+    inputs: [datadog_agent.metrics]
+    route:
+      system_metrics: '.tags.source == "system"'
+      container_metrics: '.tags.source == "container"'
+      custom_metrics: '.tags.source == "custom"'
+
+# Data Destinations - where processed data goes
+sinks:
+  # Send processed logs to Datadog
+  datadog_logs:
+    type: datadog_logs
+    inputs: [enrich_logs]
+    default_api_key: "${DD_OPW_API_KEY}"
+    site: "${DD_SITE}"
+    compression: gzip
+    
+    # Add pipeline-specific tags
+    encoding:
+      codec: json
+    
+    # Buffer settings for reliability
+    buffer:
+      type: disk
+      max_size: 268435488  # 256MB
+      when_full: block
+
+  # Send metrics to Datadog  
+  datadog_metrics:
+    type: datadog_metrics
+    inputs: 
+      - route_metrics.system_metrics
+      - route_metrics.container_metrics 
+      - route_metrics.custom_metrics
+    default_api_key: "${DD_OPW_API_KEY}"
+    site: "${DD_SITE}"
+    
+    # Buffer for high-throughput metrics
+    buffer:
+      type: memory
+      max_events: 10000
+      when_full: block
+
+# Pipeline health monitoring
+api:
+  enabled: true
+  address: 0.0.0.0:8686
+  playground: false
+
+# Enable internal metrics for monitoring the pipeline itself
+sources:
+  internal_metrics:
+    type: internal_metrics
+    namespace: "datadog_opw"
+
+sinks:
+  pipeline_metrics:
+    type: datadog_metrics
+    inputs: [internal_metrics]
+    default_api_key: "${DD_OPW_API_KEY}"
+    site: "${DD_SITE}"
+    namespace: "observability_pipelines"
