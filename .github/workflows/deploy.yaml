@@ -152,13 +152,29 @@ jobs:
             OPW_DIR="/volume1/docker/datadog-opw"
             echo "📁 Setting up Datadog OPW directory structure..."
             
-            # Create main OPW directory
-            sudo mkdir -p "$OPW_DIR"
-            sudo chown $(whoami):users "$OPW_DIR"
+            # Check if we can write to /volume1/docker
+            if [ ! -d "/volume1/docker" ]; then
+              echo "❌ /volume1/docker does not exist"
+              exit 1
+            fi
+            
+            # Create main OPW directory (try without sudo first)
+            if mkdir -p "$OPW_DIR" 2>/dev/null; then
+              echo "✅ Created OPW directory without sudo"
+            else
+              echo "❌ Cannot create OPW directory - insufficient permissions"
+              echo "Directory permissions:"
+              ls -la /volume1/docker/
+              exit 1
+            fi
             
             # Create OPW data directory
-            sudo mkdir -p "$OPW_DIR/data"
-            sudo chown -R $(whoami):users "$OPW_DIR"
+            if mkdir -p "$OPW_DIR/data" 2>/dev/null; then
+              echo "✅ Created OPW data directory"
+            else
+              echo "❌ Cannot create OPW data directory - insufficient permissions"
+              exit 1
+            fi
             
             # Copy OPW configuration files from temp location
             echo "📋 Copying OPW configuration files..."
@@ -203,16 +219,19 @@ jobs:
             echo "📁 Ensuring OPW data directory exists..."
             if [ ! -d "$OPW_DIR/data" ]; then
               echo "Creating data directory: $OPW_DIR/data"
-              sudo mkdir -p "$OPW_DIR/data"
-              sudo chown -R $(whoami):users "$OPW_DIR/data"
-              echo "✅ Data directory created"
+              if mkdir -p "$OPW_DIR/data" 2>/dev/null; then
+                echo "✅ Data directory created"
+              else
+                echo "❌ Failed to create data directory - insufficient permissions"
+                exit 1
+              fi
             else
               echo "✅ Data directory already exists"
             fi
             
             # Verify directory exists before Docker run
             if [ ! -d "$OPW_DIR/data" ]; then
-              echo "❌ Failed to create data directory"
+              echo "❌ Data directory verification failed"
               exit 1
             fi
             
