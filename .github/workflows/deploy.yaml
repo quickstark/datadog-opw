@@ -242,11 +242,18 @@ jobs:
               exit 1
             fi
             
-            # Deploy Datadog OPW - container should now work with fixed Dockerfile
+            # Deploy Datadog OPW - using Synology user to fix volume permissions
             echo "🚀 Starting Datadog OPW..."
+            
+            # Get the actual user ID who owns the data directory
+            DATA_DIR_OWNER=$(stat -c '%u' /volume1/docker/datadog-opw/data 2>/dev/null || echo "1026")
+            DATA_DIR_GROUP=$(stat -c '%g' /volume1/docker/datadog-opw/data 2>/dev/null || echo "100")
+            echo "Data directory owned by UID:GID = $DATA_DIR_OWNER:$DATA_DIR_GROUP"
+            
             $DOCKER_CMD run -d \
               --name dd-opw \
               --restart unless-stopped \
+              --user $DATA_DIR_OWNER:$DATA_DIR_GROUP \
               -e DD_API_KEY=${{ secrets.DD_OPW_API_KEY }} \
               -e DD_OP_PIPELINE_ID=${{ secrets.DD_OP_PIPELINE_ID }} \
               -e DD_SITE=datadoghq.com \
